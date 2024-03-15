@@ -1,0 +1,171 @@
+# author: Noppakorn Tantipura
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+
+
+initial = [1,0,1,0] #4 possible inputs are: [1,0,1,0],[1,0,0,1j],[0,1j,1,0],[0,1j,0,1j]
+(omega1,omega2) = (1,1) 
+gamma = 0.04 #set decay rate
+omegastd = 0  #set variation in laser intensity
+realizations = 500 #set number of realizations
+timeratio = 300 #fraction of a rabi frequency period used for timestep. enter in multiples of 100.
+
+fig = plt.figure(figsize = [12,4])
+ax1 = fig.add_subplot(1,2,1); ax2 = fig.add_subplot(1,2,2); 
+
+def evolute2(c,d,omega,omegastd,delta,deltastd,gamma,timestep,iterations,realizations,stage):
+    every = np.empty((realizations,iterations),dtype = complex)
+    every1 = np.empty((realizations,iterations),dtype = complex)
+    wfns = np.empty((2,realizations),dtype = complex)
+    
+    norms = np.empty(realizations)
+    
+    (omegastore,deltastore) = (omega,delta) #value storage
+    for r in range (0,realizations):
+        delta = np.random.normal(deltastore,deltastd)
+        omega = np.random.normal(omegastore,omegastd)
+        (a,b) = (c[r],d[r])
+        e = np.sqrt(np.conj(a)*a + np.conj(b)*b)
+        norms[r] = e
+        if e <= 0.00000000000000000001:
+            every[r] = np.full(iterations,0)
+            every1[r] = np.full(iterations,0)
+            wfns[0][r] = 0
+            wfns[1][r] = 0
+            continue
+        else:
+            a /= e; b /= e
+        for i in range (0,iterations):
+            every[r][i] = np.conj(b)*b
+            every1[r][i] = np.conj(a)*a
+            
+            da = (1/2j)*timestep*(a*delta+b*omega)
+            db = (1/2j)*timestep*(a*omega-b*delta-b*gamma*1j)
+            a += da; b += db
+            
+            norm = np.conj(a)*a + np.conj(b)*b # normsquared of the updated wavefunction
+            if norm <= random.random():
+                (a,b) = (1,0)
+            else:
+                a /= np.sqrt(norm); b /= np.sqrt(norm)
+            if i == iterations - 1:
+                wfns[0][r] = a*e
+                wfns[1][r] = b*e
+        every[r] *= e**2
+        every1[r] *= e**2    
+        
+    return np.mean(every,axis=0), np.std(every,axis=0), np.mean(every1,axis=0), np.std(every1,axis=0), wfns[0], wfns[1], norms
+  
+#initial conditions
+ground = np.zeros((4,int(timeratio*2.25)),dtype = complex); excited = np.zeros((4,int(timeratio*2.25)),dtype = complex); 
+auxiliary = np.zeros((4,int(timeratio*2.25)),dtype = complex) #array of populations control 01 target 23
+phonon = 0
+
+#hadamard target
+a = list(range(0,int(timeratio*0.25)))
+hadamard1 = evolute2(np.full(realizations,initial[2]),np.full(realizations,initial[3]),1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.25),realizations,'hadamard1')
+ground[2][a] = hadamard1[2]; ground[3][a] = hadamard1[3]
+excited[2][a] = hadamard1[0]; excited[3][a] = hadamard1[1]
+
+#wait1 target 
+a = list(range(int(timeratio*0.25),int(timeratio*0.5)))
+wait1 = evolute2(hadamard1[4],hadamard1[5],0,0,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.25),realizations,'wait1')
+ground[2][a] = wait1[2]; ground[3][a] = wait1[3]
+excited[2][a] = wait1[0]; excited[3][a] = wait1[1]
+
+#RSB control
+if initial[0] == 0 and initial[1] == 1j: #if in e0 go to g1
+    RSB1 = evolute2(np.full(realizations,initial[0]),np.full(realizations,initial[1]),1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.5),realizations,'RSB1')
+    phonon = 1
+else:
+    RSB1 = evolute2(np.full(realizations,1),np.full(realizations,0),1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.50),realizations,'RSB1')
+
+a = list(range(0,int(timeratio*0.5)))
+ground[0][a] = RSB1[2]; ground[1][a] = RSB1[3]
+excited[0][a] = RSB1[0]; excited[1][a] = RSB1[1]
+
+#2pi target g1->a
+a = list(range(int(timeratio*0.5),int(timeratio*1.5)))
+if phonon == 1:
+    twopi = evolute2(wait1[4],np.full(realizations,0),1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio),realizations,'twopi')
+    ground[2][a] = twopi[2]; ground[3][a] = twopi[3]**2
+    auxiliary[2][a] = twopi[0]; auxiliary[3][a] = twopi[1]
+    
+    #decay from excited to ground while 2pi target
+    twopidecay = evolute2(np.full(realizations,0),wait1[5],0,0,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio),realizations,'twopidecay')
+    ground[2][a] += twopidecay[2]; ground[3][a] += twopidecay[3]**2
+    excited[2][a] = twopidecay[0]; excited[3][a] = twopidecay[1]
+    ground[3][a] = np.sqrt(ground[3][a])
+    
+else:
+    twopidecay = evolute2(wait1[4],wait1[5],0,0,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio),realizations,'twopidecay')
+    ground[2][a] = twopidecay[2]; ground[3][a] = twopidecay[3]
+    excited[2][a] = twopidecay[0]; excited[3][a] = twopidecay[1]
+
+    
+#wait3 control
+a = list(range(int(timeratio*0.5),int(timeratio*1.75)))
+wait3 = evolute2(RSB1[4],RSB1[5],0,0,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*1.25),realizations,'wait3')
+ground[0][a] = wait3[2]; ground[1][a] = wait3[3]
+excited[0][a] = wait3[0]; excited[1][a] = wait3[1]
+
+#RSB2 control
+
+a = list(range(int(timeratio*1.75),int(timeratio*2.25)))
+RSB2 = evolute2(wait3[4],wait3[5],1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.50),realizations,'RSB2')
+ground[0][a] = RSB2[2]; ground[1][a] = RSB2[3]
+excited[0][a] = RSB2[0]; excited[1][a] = RSB2[1]
+
+# wait6 target
+a = list(range(int(timeratio*1.5),int(timeratio*2.25)))
+if phonon == 1:
+    wait6 = evolute2(twopidecay[4],twopi[5],0,0,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.75),realizations,'wait6')
+    ground[2][a] += wait6[2]; ground[3][a] += wait6[3]**2
+    auxiliary[2][a] += wait6[0]; auxiliary[3][a] += wait6[1]
+
+#hadamard 2 target
+if phonon == 1:
+    hadamard2 = evolute2(twopi[4],twopidecay[5],1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.75),realizations,'hadamard2')
+    ground[2][a] += hadamard2[2]; ground[3][a] += hadamard2[3]**2
+    excited[2][a] = hadamard2[0]; excited[3][a] += hadamard2[1]
+
+    ground[3][list(range(int(timeratio*1.5),int(timeratio*2.25)))] = np.sqrt(ground[3][list(range(int(timeratio*1.50),int(timeratio*2.25)))])
+else:
+    hadamard2 = evolute2(twopidecay[4],twopidecay[5],1,omegastd,0,0,gamma,(1/timeratio)*(2*np.pi/omega1),int(timeratio*0.75),realizations,'hadamard2')
+    ground[2][a] += hadamard2[2]; ground[3][a] += hadamard2[1]
+    excited[2][a] = hadamard2[0]; excited[3][a] += hadamard2[1]
+    
+ground[1] /= np.sqrt(realizations); ground[3] /= np.sqrt(realizations)
+excited[1] /= np.sqrt(realizations); excited[3] /= np.sqrt(realizations)
+auxiliary[1] /= np.sqrt(realizations); auxiliary[3] /= np.sqrt(realizations)
+    
+#plotting
+ax1.plot(range(0,int(timeratio*2.25)),np.full(int(timeratio*2.25),0),label = 'auxiliary',color = 'blue')
+
+ax2.plot(range(0,int(timeratio*2.25)),auxiliary[2],label = 'auxiliary',color = 'blue')
+ax2.fill_between(range(0,int(timeratio*2.25)),auxiliary[2]-auxiliary[3],auxiliary[2]+auxiliary[3],color = 'pink')
+
+ax1.plot(range(0,int(timeratio*2.25)),excited[0],label = 'excited',color = 'red') #control, excited
+ax1.fill_between(range(0,int(timeratio*2.25)),excited[0]-excited[1],excited[0]+excited[1],color = 'pink')
+
+ax1.plot(range(0,int(timeratio*2.25)),ground[0],label = 'excited',color = 'black') #control, ground
+#ax5.fill_between(range(0,int(timeratio*2.25)),ground[0]-ground[1],ground[0]+ground[1],color = 'pink')
+
+ax2.plot(range(0,int(timeratio*2.25)),excited[2],label = 'ground',color = 'red') #target, excited
+ax2.fill_between(range(0,int(timeratio*2.25)),excited[2]-excited[3],excited[2]+excited[3],color = 'pink')
+
+ax2.plot(range(0,int(timeratio*2.25)),ground[2],label = 'ground',color = 'black') #target, ground
+ax2.fill_between(range(0,int(timeratio*2.25)),ground[2]-ground[3],ground[2]+ground[3],color = 'pink')
+
+ax1.set_ylim(0,1);ax2.set_ylim(0,1)
+ax1.set_xlim(0,int(timeratio*2.25));ax2.set_xlim(0,int(timeratio*2.25))
+
+ax1.legend(),ax2.legend()
+
+print(ground[0][-1],'P(g) of control',)
+print(ground[2][-1],'P(g) of excited')
+print(excited[0][-1],'P(e) of control')
+print(excited[2][-1],'P(e) of excited')
+print(auxiliary[0][-1],'P(a) of control')
+print(auxiliary[2][-1],'P(a) of excited')
